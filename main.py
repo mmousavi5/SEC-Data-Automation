@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 
@@ -15,6 +16,7 @@ class Settings(BaseSettings):
     state_path: str = "state.jsonl"
     companies_path: str = "companies.json"
     fetch_workers: int = 4
+    max_job_retries: int = 3
 
 
 settings = Settings()
@@ -38,10 +40,11 @@ def load_ledger():
     return status_by_key
 
 
-def record_status(cik, accession, status):
+def record_status(cik, accession, status, retries):
     # Always append, never rewrite, so a crash can only cost the newest line.
+    record = {"cik": cik, "accession": accession, "status": status, "retries": retries}
     with open(settings.state_path, "a") as f:
-        f.write(json.dumps({"cik": cik, "accession": accession, "status": status}) + "\n")
+        f.write(json.dumps(record) + "\n")
 
 
 def find_latest_10k(cik):
@@ -72,25 +75,32 @@ def fetch_company(name, cik):
         print(f"{name} is already {status}, skipping")
         return
 
-    try:
-        cik_no_zeros = str(int(cik))
-        accession_no_dashes = accession.replace("-", "")
-        document_url = (
-            f"https://www.sec.gov/Archives/edgar/data/{cik_no_zeros}/{accession_no_dashes}/{document}"
-        )
-        document_response = requests.get(document_url, headers={"User-Agent": settings.user_agent})
-        document_response.raise_for_status()
+    cik_no_zeros = str(int(cik))
+    accession_no_dashes = accession.replace("-", "")
+    document_url = (
+        f"https://www.sec.gov/Archives/edgar/data/{cik_no_zeros}/{accession_no_dashes}/{document}"
+    )
+    raw_path = f"{cik}_{accession}.htm"
 
-        raw_path = f"{cik}_{accession}.htm"
-        with open(raw_path, "wb") as f:
-            f.write(document_response.content)
-
-        record_status(cik, accession, "fetched")
-        print(f"fetched {name} -> {raw_path}")
-
-    except requests.RequestException:
-        record_status(cik, accession, "failed")
-        print(f"failed to fetch {name}, recorded as failed")
+    retries = 0
+    while True:
+        try:
+            headers = {"User-Agent": settings.user_agent}
+            document_response = requests.get(document_url, headers=headers)
+            document_response.raise_for_status()
+            with open(raw_path, "wb") as f:
+                f.write(document_response.content)
+            record_status(cik, accession, "fetched", retries)
+            print(f"fetched {name} -> {raw_path}")
+            return
+        except requests.RequestException:
+            retries += 1
+            if retries > settings.max_job_retries:
+                record_status(cik, accession, "failed", retries)
+                print(f"dead-lettered {name} after {retries} retries (fetch)")
+                return
+            print(f"fetch failed for {name}, retry {retries}/{settings.max_job_retries}")
+            time.sleep(1)
 
 
 def convert_job(cik, accession):
@@ -98,18 +108,29 @@ def convert_job(cik, accession):
     # variables, so it recomputes the same file paths from just (cik, accession).
     raw_path = f"{cik}_{accession}.htm"
     pdf_path = f"{cik}_{accession}.pdf"
-    try:
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch()
-            page = browser.new_page()
-            page.goto(Path(raw_path).resolve().as_uri())
-            page.pdf(path=pdf_path)
-            browser.close()
-        record_status(cik, accession, "converted")
-        print(f"converted {cik} {accession} -> {pdf_path}")
-    except Exception:
-        record_status(cik, accession, "failed")
-        print(f"failed to convert {cik} {accession}, recorded as failed")
+
+    retries = 0
+    while True:
+        try:
+            with sync_playwright() as pw:
+                browser = pw.chromium.launch()
+                page = browser.new_page()
+                page.goto(Path(raw_path).resolve().as_uri())
+                page.pdf(path=pdf_path)
+                browser.close()
+            record_status(cik, accession, "converted", retries)
+            print(f"converted {cik} {accession} -> {pdf_path}")
+            return
+        except Exception:
+            retries += 1
+            if retries > settings.max_job_retries:
+                record_status(cik, accession, "failed", retries)
+                print(f"dead-lettered {cik} {accession} after {retries} retries (convert)")
+                return
+            print(
+                f"convert failed for {cik} {accession}, retry {retries}/{settings.max_job_retries}"
+            )
+            time.sleep(1)
 
 
 if __name__ == "__main__":
@@ -117,12 +138,9 @@ if __name__ == "__main__":
     names = [name for name, cik in companies]
     ciks = [cik for name, cik in companies]
 
-    # Phase 1: fetch everyone concurrently. I/O-bound, so threads give real parallelism.
     with ThreadPoolExecutor(max_workers=settings.fetch_workers) as pool:
         list(pool.map(fetch_company, names, ciks))
 
-    # Phase 2: convert everyone that's fetched, concurrently. CPU-bound rendering
-    # needs real processes, not threads, to actually run in parallel.
     status_by_key = load_ledger()
     jobs = [key for key, status in status_by_key.items() if status == "fetched"]
     job_ciks = [cik for cik, accession in jobs]
