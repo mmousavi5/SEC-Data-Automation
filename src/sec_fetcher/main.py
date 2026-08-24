@@ -43,7 +43,10 @@ def run_conversions(jobs: list[FilingJob], state_store: StateStore) -> None:
                     else:
                         logger.warning(
                             "convert failed for %s %s, retry %d/%d",
-                            job.cik, job.accession, job.retries, settings.max_job_retries,
+                            job.cik,
+                            job.accession,
+                            job.retries,
+                            settings.max_job_retries,
                         )
                         futures[pool.submit(converter.convert_to_pdf, job)] = job
 

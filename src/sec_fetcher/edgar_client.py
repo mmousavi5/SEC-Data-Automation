@@ -12,7 +12,9 @@ from .models import Company, Filing
 
 _TICKER_LOOKUP_URL = "https://www.sec.gov/files/company_tickers.json"
 _SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
-_ARCHIVES_URL = "https://www.sec.gov/Archives/edgar/data/{cik_no_zeros}/{accession_no_dashes}/{document}"
+_ARCHIVES_URL = (
+    "https://www.sec.gov/Archives/edgar/data/{cik_no_zeros}/{accession_no_dashes}/{document}"
+)
 
 
 class _RateLimiter:
