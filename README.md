@@ -114,3 +114,8 @@ All settings are environment variables with a `SEC_FETCHER_` prefix, loaded from
 pip install -r requirements.txt
 pytest
 ```
+
+## AI question log
+
+`ai_question_log.md` in the repo root keeps a running log of questions asked of an AI
+assistant while working on this project.
