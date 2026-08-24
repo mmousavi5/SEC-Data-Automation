@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum
 from pathlib import Path
 
 
-class Status(str, StrEnum):
+class Status(Enum):
     PENDING = "pending"
     FETCHED = "fetched"
     CONVERTED = "converted"

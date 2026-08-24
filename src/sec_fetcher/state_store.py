@@ -4,7 +4,7 @@ import json
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from .models import FilingJob, Status
 
@@ -19,7 +19,7 @@ class LocalFileStateStore:
     def __init__(self, path: Path):
         self._path = path
         self._lock = threading.Lock()
-        self._latest: dict[tuple[str, str], dict] = {}
+        self._latest: dict[tuple[str, str], dict[str, Any]] = {}
         self._load()
 
     def _load(self) -> None:
@@ -45,7 +45,7 @@ class LocalFileStateStore:
             "fiscal_year": job.fiscal_year,
             "status": status.value,
             "retries": job.retries,
-            "updated_at": datetime.now(timezone.UTC).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         with self._lock:
             self._path.parent.mkdir(parents=True, exist_ok=True)

@@ -4,3 +4,4 @@ requests>=2.31
 pydantic-settings>=2.2
 playwright>=1.40
 tenacity>=8.2
+mypy>=1.10

@@ -1,18 +1,19 @@
 from __future__ import annotations
+from pathlib import Path
 
 import atexit
 import re
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Browser, Playwright, sync_playwright
 
 from .config import settings
 from .models import FilingJob
 
-_playwright = None
-_browser = None
+_playwright: Playwright | None = None
+_browser: Browser | None = None
 
 
-def _get_browser():
+def _get_browser() -> Browser:
     """One Chromium instance per worker process, reused across every job that process
     handles. ProcessPoolExecutor reuses worker processes across submitted tasks, so
     launching a fresh browser per filing would pay startup cost repeatedly for nothing —
@@ -36,7 +37,7 @@ def _safe_filename(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]+", "_", text).strip("_")
 
 
-def convert_to_pdf(job: FilingJob):
+def convert_to_pdf(job: FilingJob) -> Path:
     """Runs inside a process-pool worker. Takes and returns plain data (a FilingJob and a
     Path) so it can cross the process boundary without needing shared memory."""
     raw_path = job.raw_path or (settings.raw_dir / f"{job.cik}_{job.accession}.htm")

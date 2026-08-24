@@ -8,15 +8,15 @@ from playwright.sync_api import Error as PlaywrightError
 
 from . import converter, fetcher
 from .config import settings
-from .models import Status
+from .models import FilingJob, Status
 from .providers import get_provider
-from .state_store import LocalFileStateStore
+from .state_store import LocalFileStateStore, StateStore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("sec_fetcher")
 
 
-def run_conversions(jobs, state_store) -> None:
+def run_conversions(jobs: list[FilingJob], state_store: StateStore) -> None:
     """Consumes a batch of fetched jobs on a process pool, retrying failures up to
     settings.max_job_retries before dead-lettering them."""
     with cf.ProcessPoolExecutor() as pool:
@@ -53,7 +53,7 @@ def run() -> None:
     settings.pdf_dir.mkdir(parents=True, exist_ok=True)
 
     state_store = LocalFileStateStore(settings.state_path)
-    job_queue: queue.Queue = queue.Queue()  # stands in for a real broker — see README
+    job_queue: queue.Queue[FilingJob] = queue.Queue()  # stands in for a real broker — see README
 
     # Resume anything a previous, interrupted run had fetched but never converted, before
     # this run adds anything new — that's what makes "request 8765 failed" a non-event.
