@@ -10,15 +10,19 @@ class Settings(BaseSettings):
 
     user_agent: str = "A Test Project dev@example.com"
     state_path: str = "state.jsonl"
+    companies_path: str = "companies.json"
 
 
 settings = Settings()
 
-COMPANIES = [
-    ("Apple Inc", "0000320193"),
-    ("Microsoft Corp", "0000789019"),
-    ("Amazon.com Inc", "0001018724"),
-]
+
+def load_companies(path):
+    with open(path) as f:
+        rows = json.load(f)
+    return [(row["name"], row["cik"]) for row in rows]
+
+
+COMPANIES = load_companies(settings.companies_path)
 
 
 def load_ledger():
