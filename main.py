@@ -2,9 +2,17 @@ import json
 import os
 
 import requests
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-USER_AGENT = "A Test Project dev@example.com"
-STATE_PATH = "state.jsonl"
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="SEC_FETCHER_")
+
+    user_agent: str = "A Test Project dev@example.com"
+    state_path: str = "state.jsonl"
+
+
+settings = Settings()
 
 COMPANIES = [
     ("Apple Inc", "0000320193"),
@@ -14,9 +22,10 @@ COMPANIES = [
 
 
 def load_ledger():
+    # Replay the log; the last line for a key is its current status.
     status_by_key = {}
-    if os.path.exists(STATE_PATH):
-        with open(STATE_PATH) as f:
+    if os.path.exists(settings.state_path):
+        with open(settings.state_path) as f:
             for line in f:
                 record = json.loads(line)
                 key = (record["cik"], record["accession"])
@@ -25,7 +34,8 @@ def load_ledger():
 
 
 def record_status(cik, accession, status):
-    with open(STATE_PATH, "a") as f:
+    # Always append, never rewrite, so a crash can only cost the newest line.
+    with open(settings.state_path, "a") as f:
         f.write(json.dumps({"cik": cik, "accession": accession, "status": status}) + "\n")
 
 
@@ -33,7 +43,7 @@ status_by_key = load_ledger()
 
 for name, cik in COMPANIES:
     submissions_url = f"https://data.sec.gov/submissions/CIK{cik}.json"
-    response = requests.get(submissions_url, headers={"User-Agent": USER_AGENT})
+    response = requests.get(submissions_url, headers={"User-Agent": settings.user_agent})
     response.raise_for_status()
     recent = response.json()["filings"]["recent"]
 
@@ -65,7 +75,7 @@ for name, cik in COMPANIES:
             f"https://www.sec.gov/Archives/edgar/data/{cik_no_zeros}/{accession_no_dashes}/{document}"
         )
 
-        document_response = requests.get(document_url, headers={"User-Agent": USER_AGENT})
+        document_response = requests.get(document_url, headers={"User-Agent": settings.user_agent})
         document_response.raise_for_status()
 
         output_path = f"{cik}_{accession}.htm"
