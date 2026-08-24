@@ -1,14 +1,35 @@
+import json
 import os
 
 import requests
 
 USER_AGENT = "A Test Project dev@example.com"
+STATE_PATH = "state.jsonl"
 
 COMPANIES = [
     ("Apple Inc", "0000320193"),
     ("Microsoft Corp", "0000789019"),
     ("Amazon.com Inc", "0001018724"),
 ]
+
+
+def load_ledger():
+    status_by_key = {}
+    if os.path.exists(STATE_PATH):
+        with open(STATE_PATH) as f:
+            for line in f:
+                record = json.loads(line)
+                key = (record["cik"], record["accession"])
+                status_by_key[key] = record["status"]
+    return status_by_key
+
+
+def record_status(cik, accession, status):
+    with open(STATE_PATH, "a") as f:
+        f.write(json.dumps({"cik": cik, "accession": accession, "status": status}) + "\n")
+
+
+status_by_key = load_ledger()
 
 for name, cik in COMPANIES:
     submissions_url = f"https://data.sec.gov/submissions/CIK{cik}.json"
@@ -18,7 +39,10 @@ for name, cik in COMPANIES:
 
     accession = None
     document = None
-    for form, acc, doc in zip(recent["form"], recent["accessionNumber"], recent["primaryDocument"]):
+    filing_fields = zip(
+        recent["form"], recent["accessionNumber"], recent["primaryDocument"], strict=True
+    )
+    for form, acc, doc in filing_fields:
         if form == "10-K":
             accession = acc
             document = doc
@@ -28,20 +52,31 @@ for name, cik in COMPANIES:
         print(f"no 10-K found for {name}, skipping")
         continue
 
-    output_path = f"{cik}_{accession}.htm"
-
-    if os.path.exists(output_path):
-        print(f"already have {name} ({output_path}), skipping")
+    key = (cik, accession)
+    existing_status = status_by_key.get(key)
+    if existing_status is not None:
+        print(f"{name} is already '{existing_status}', skipping")
         continue
 
-    cik_no_zeros = str(int(cik))
-    accession_no_dashes = accession.replace("-", "")
-    document_url = f"https://www.sec.gov/Archives/edgar/data/{cik_no_zeros}/{accession_no_dashes}/{document}"
+    try:
+        cik_no_zeros = str(int(cik))
+        accession_no_dashes = accession.replace("-", "")
+        document_url = (
+            f"https://www.sec.gov/Archives/edgar/data/{cik_no_zeros}/{accession_no_dashes}/{document}"
+        )
 
-    document_response = requests.get(document_url, headers={"User-Agent": USER_AGENT})
-    document_response.raise_for_status()
+        document_response = requests.get(document_url, headers={"User-Agent": USER_AGENT})
+        document_response.raise_for_status()
 
-    with open(output_path, "wb") as f:
-        f.write(document_response.content)
+        output_path = f"{cik}_{accession}.htm"
+        with open(output_path, "wb") as f:
+            f.write(document_response.content)
 
-    print(f"saved {name} -> {output_path}")
+        record_status(cik, accession, "fetched")
+        status_by_key[key] = "fetched"
+        print(f"saved {name} -> {output_path}")
+
+    except requests.RequestException:
+        record_status(cik, accession, "failed")
+        status_by_key[key] = "failed"
+        print(f"failed to download {name}, recorded as failed")
