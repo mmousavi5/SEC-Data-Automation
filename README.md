@@ -4,12 +4,6 @@ Downloads 10-K filings for a list of companies from SEC EDGAR and converts each 
 PDF. A local ledger tracks every filing through the pipeline, so a restart after a crash
 or a `Ctrl-C` resumes only the work that wasn't finished.
 
-**Current status:** the fetch stage is not implemented yet. `fetcher.fetch_company()`
-(`src/sec_fetcher/fetcher.py`) is a stub that raises `NotImplementedError` — running the
-pipeline today loads the company list and then fails on the first company. The pieces it
-needs (`resolve_cik`, `list_recent_filings`, `download_filing_document` in
-`edgar_client.py`) exist and are usable; they're just not wired together yet.
-
 ## How it works
 
 The pipeline has two stages, connected by a status ledger:
@@ -20,7 +14,9 @@ The pipeline has two stages, connected by a status ledger:
    (`SEC_FETCHER_FETCH_WORKERS` workers) since the work is network-bound, and every
    outbound request goes through a shared rate limiter capped at
    `SEC_FETCHER_RATE_LIMIT_PER_SECOND` requests/second, in line with SEC's fair-access
-   rules.
+   rules. A failed download retries up to `SEC_FETCHER_MAX_JOB_RETRIES` times before the
+   filing is marked `failed`; a company whose CIK can't be resolved or has no filings
+   listed is logged and skipped, not retried.
 2. **Convert.** Each fetched filing is rendered to PDF with a headless Chromium instance
    (Playwright). Runs on a process pool, since PDF rendering is CPU-bound and each worker
    process reuses one browser instance across every job it handles. A failed conversion
@@ -30,7 +26,9 @@ The pipeline has two stages, connected by a status ledger:
 JSONL file (`SEC_FETCHER_STATE_PATH`) where each line records a filing's status
 (`pending` → `fetched` → `converted`, or `failed`). On startup, `main.py` replays this
 file and re-queues anything left in `fetched` state before fetching anything new, so a
-filing that was downloaded but never converted isn't re-downloaded.
+filing that was downloaded but never converted isn't re-downloaded. The fetch stage also
+checks the ledger per filing: a company whose latest 10-K is already `fetched`,
+`converted`, or `failed` from a previous run is skipped rather than re-downloaded.
 
 Within a single run, fetched jobs hand off to the convert stage through an in-memory
 `queue.Queue` (`main.py:56`) — a stand-in for a real message broker. It works because
@@ -51,28 +49,30 @@ implementation is `local_file` (reads `SEC_FETCHER_COMPANIES_PATH`); `get_provid
    playwright install chromium
    ```
 
-2. Copy the example environment file and adjust it if needed:
+2. Copy the example environment file and set a real User-Agent:
 
    ```
    cp .env.example .env
    ```
 
-   The defaults write all data under `./data` and read companies from
-   `data/companies.json` — copy or point `SEC_FETCHER_COMPANIES_PATH` at the
-   `companies.json` in the repo root to use the sample list (Apple, Microsoft, Amazon).
+   SEC EDGAR requires a User-Agent that identifies the requester; edit
+   `SEC_FETCHER_USER_AGENT` in `.env` before running — requests sent with the placeholder
+   value are liable to be rate-limited or blocked. Every other setting already has a
+   working default (see **Configuration** below). To use the sample company list included
+   in the repo root instead of the default `data/companies.json`, also set:
 
-3. Set a real `SEC_FETCHER_USER_AGENT` in `.env`. SEC EDGAR requires a descriptive
-   User-Agent identifying the requester (for example `"Your Name your@email.com"`);
-   requests with the placeholder value are liable to be rate-limited or blocked.
+   ```
+   SEC_FETCHER_COMPANIES_PATH=companies.json
+   ```
 
-4. Run the pipeline:
+3. Run the pipeline:
 
    ```
    PYTHONPATH=src python -m sec_fetcher.main
    ```
 
-   Until the fetch stage is implemented (see **Current status** above), this loads the
-   company list and then raises `NotImplementedError` on the first company.
+   This fetches each company's most recent 10-K and writes a PDF per filing to
+   `SEC_FETCHER_PDF_DIR` (`data/pdf` by default).
 
 ## Configuration
 
@@ -101,7 +101,7 @@ All settings are environment variables with a `SEC_FETCHER_` prefix, loaded from
 |---|---|
 | `main.py` | Orchestrates a run: loads companies, fetches on a thread pool, converts on a process pool. |
 | `edgar_client.py` | All outbound calls to SEC EDGAR — CIK resolution, filing lookup, document download, rate limiting. |
-| `fetcher.py` | Per-company fetch step that ties `edgar_client` calls to the state ledger. Currently a stub. |
+| `fetcher.py` | Per-company fetch step that ties `edgar_client` calls to the state ledger. |
 | `converter.py` | Renders a fetched filing's HTML to PDF via headless Chromium. |
 | `providers.py` | `CompanyProvider` implementations — where the company list comes from. |
 | `state_store.py` | The JSONL status ledger (`LocalFileStateStore`) that makes a restart resumable. |
