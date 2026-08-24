@@ -5,6 +5,7 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 
 import requests
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -121,7 +122,7 @@ def convert_job(cik, accession):
             record_status(cik, accession, "converted", retries)
             print(f"converted {cik} {accession} -> {pdf_path}")
             return
-        except Exception:
+        except (PlaywrightError, OSError):
             retries += 1
             if retries > settings.max_job_retries:
                 record_status(cik, accession, "failed", retries)
