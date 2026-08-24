@@ -45,7 +45,7 @@ class LocalFileStateStore:
             "fiscal_year": job.fiscal_year,
             "status": status.value,
             "retries": job.retries,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.UTC).isoformat(),
         }
         with self._lock:
             self._path.parent.mkdir(parents=True, exist_ok=True)
