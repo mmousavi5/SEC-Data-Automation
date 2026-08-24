@@ -1,7 +1,9 @@
 import json
 import os
+from pathlib import Path
 
 import requests
+from playwright.sync_api import sync_playwright
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -43,6 +45,16 @@ def record_status(cik, accession, status):
         f.write(json.dumps({"cik": cik, "accession": accession, "status": status}) + "\n")
 
 
+def convert_to_pdf(raw_path, pdf_path):
+    # Naive on purpose: a fresh browser per call. A later step reuses one instead.
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page()
+        page.goto(Path(raw_path).resolve().as_uri())
+        page.pdf(path=pdf_path)
+        browser.close()
+
+
 status_by_key = load_ledger()
 
 for name, cik in COMPANIES:
@@ -67,30 +79,46 @@ for name, cik in COMPANIES:
         continue
 
     key = (cik, accession)
-    existing_status = status_by_key.get(key)
-    if existing_status is not None:
-        print(f"{name} is already '{existing_status}', skipping")
+    status = status_by_key.get(key)
+    raw_path = f"{cik}_{accession}.htm"
+    pdf_path = f"{cik}_{accession}.pdf"
+
+    if status == "converted":
+        print(f"{name} is already converted, skipping")
         continue
 
+    if status != "fetched":
+        # Nothing usable on disk yet, so fetch first.
+        try:
+            cik_no_zeros = str(int(cik))
+            accession_no_dashes = accession.replace("-", "")
+            document_url = (
+                f"https://www.sec.gov/Archives/edgar/data/{cik_no_zeros}/{accession_no_dashes}/{document}"
+            )
+            document_response = requests.get(
+                document_url, headers={"User-Agent": settings.user_agent}
+            )
+            document_response.raise_for_status()
+
+            with open(raw_path, "wb") as f:
+                f.write(document_response.content)
+
+            record_status(cik, accession, "fetched")
+            status_by_key[key] = "fetched"
+            print(f"fetched {name} -> {raw_path}")
+
+        except requests.RequestException:
+            record_status(cik, accession, "failed")
+            status_by_key[key] = "failed"
+            print(f"failed to fetch {name}, recorded as failed")
+            continue
+
     try:
-        cik_no_zeros = str(int(cik))
-        accession_no_dashes = accession.replace("-", "")
-        document_url = (
-            f"https://www.sec.gov/Archives/edgar/data/{cik_no_zeros}/{accession_no_dashes}/{document}"
-        )
-
-        document_response = requests.get(document_url, headers={"User-Agent": settings.user_agent})
-        document_response.raise_for_status()
-
-        output_path = f"{cik}_{accession}.htm"
-        with open(output_path, "wb") as f:
-            f.write(document_response.content)
-
-        record_status(cik, accession, "fetched")
-        status_by_key[key] = "fetched"
-        print(f"saved {name} -> {output_path}")
-
-    except requests.RequestException:
+        convert_to_pdf(raw_path, pdf_path)
+        record_status(cik, accession, "converted")
+        status_by_key[key] = "converted"
+        print(f"converted {name} -> {pdf_path}")
+    except Exception:
         record_status(cik, accession, "failed")
         status_by_key[key] = "failed"
-        print(f"failed to download {name}, recorded as failed")
+        print(f"failed to convert {name}, recorded as failed")
